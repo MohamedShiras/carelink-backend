@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+symptom_model.pkl
+symptom_features.pkl
+.env
+.venv/
+venv/
