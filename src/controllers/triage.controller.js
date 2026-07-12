@@ -31,6 +31,68 @@ export const assessSymptoms = async (req, res, next) => {
     res.status(201).json({
       success: true,
       data: symptomRecord,
+      predictedDisease: assessment.predictedDisease,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const diagnoseSymptoms = async (req, res, next) => {
+  try {
+    const { symptoms, symptomsText } = req.body;
+    const normalizedSymptoms = triageMlService.normalizeSymptoms(symptoms);
+
+    if (normalizedSymptoms.length === 0 && !symptomsText) {
+      return res.status(400).json({ success: false, message: 'Symptoms are required' });
+    }
+
+    const patient = await Patient.findOne({ where: { userId: req.user.id } });
+    if (!patient) {
+      return res.status(404).json({ success: false, message: 'Patient profile not found for this user' });
+    }
+
+    const rawInput = normalizedSymptoms.length > 0 ? normalizedSymptoms : symptomsText;
+    const assessment = await triageMlService.assessSymptomsFromInput(rawInput, normalizedSymptoms);
+    const storedSymptomsText = normalizedSymptoms.length > 0 ? normalizedSymptoms.join(', ') : symptomsText;
+
+    const symptomRecord = await Symptom.create({
+      patientId: patient.id,
+      symptomsText: storedSymptomsText,
+      severityScore: assessment.severityScore,
+      triagePriority: assessment.triagePriority,
+      aiRecommendation: assessment.predictedDisease
+        ? `${assessment.recommendation} Predicted disease: ${assessment.predictedDisease}.`
+        : assessment.recommendation,
+      status: 'Pending',
+    });
+
+    res.status(201).json({
+      success: true,
+      data: symptomRecord,
+      predictedDisease: assessment.predictedDisease,
+      shouldVisitDoctor: assessment.shouldVisitDoctor,
+      urgencyLevel: assessment.urgencyLevel,
+      urgencyLabel: assessment.urgencyLabel,
+      specialistType: assessment.specialistType,
+      confidence: assessment.confidence,
+      matchedSymptoms: assessment.matchedSymptoms,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSymptoms = async (req, res, next) => {
+  try {
+    const response = await fetch(`${triageMlService.mlServiceUrl}/symptoms`);
+    if (!response.ok) {
+        throw new Error('Failed to fetch symptoms from ML service');
+    }
+    const data = await response.json();
+    res.json({
+        success: true,
+        data: data.symptoms,
     });
   } catch (error) {
     next(error);
