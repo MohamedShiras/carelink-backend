@@ -41,7 +41,8 @@ Designed modularly with Sequelize ORM and configured out-of-the-box with SQLite,
 - **`GET /api/auth/profile`** — Fetch detailed profile (requires Bearer token).
 
 ### 🤖 Symptom Entry & AI Triage (Group 2 & 3)
-- **`POST /api/triage/assess`** — Assess severity and triage priority based on symptom description (Mock ML evaluation). (Requires Patient role token).
+- **`POST /api/triage/assess`** — Assess severity and triage priority based on symptom description. (Requires Patient role token).
+- **`POST /api/triage/diagnose`** — Diagnose symptoms from a symptom list and forward the list to the Python ML service. (Requires Patient role token).
 - **`GET /api/triage/history`** — Retrieve patient triage assessment records. (Requires Patient role token).
 - **`GET /api/triage/recommend-doctors`** — Suggest matching doctors based on symptom keywords. (Requires auth token).
 
@@ -60,4 +61,21 @@ Designed modularly with Sequelize ORM and configured out-of-the-box with SQLite,
 
 ## Connecting the AI/ML Model
 
-The AI Triage uses a mock service in `src/services/triageMl.service.js`. Once training is complete, you can import your model loading scripts directly there or update it to point to a Python Flask/FastAPI model server.
+The AI Triage service in `src/services/triageMl.service.js` can call the Python microservice at `http://127.0.0.1:5001` by default.
+
+Set `ML_SERVICE_URL` if your Python server is running somewhere else.
+
+Example request for the new diagnosis endpoint:
+
+```json
+POST /api/triage/diagnose
+{
+   "symptoms": ["fever", "cough"]
+}
+```
+
+Recommended local startup order:
+
+1. Start the Python service in `ml-service` with `uvicorn app:app --reload --port 5001`.
+2. Start the Node backend with `npm run dev`.
+3. Call `POST /api/triage/diagnose` with a Bearer token for a patient account.

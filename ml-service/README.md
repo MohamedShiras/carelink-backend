@@ -4,17 +4,18 @@ This folder contains the standalone Python microservice for symptom model traini
 
 ## Files
 
-- `train_model.py` trains a model from `trainings.csv` or from a zip archive that contains `trainings.csv`.
+- `train_model.py` trains a model from the best available training CSV (`training_data.csv` is preferred, then `trainings.csv`) or from a zip archive that contains `trainings.csv`.
 - `app.py` exposes the prediction API.
 - `requirements.txt` lists the Python dependencies.
 
 ## Expected data layout
 
-Place either of these in `ml-service/` or `ml-service/data/`:
+Place any of these in `ml-service/` or `ml-service/data/`:
 
+- `training_data.csv` (preferred)
 - `trainings.csv`
 - `archive (2).zip` or any zip file that contains `trainings.csv`
-- `testing.csv`
+- `test_data.csv` or `testing.csv` (optional)
 
 ## Train the model
 
@@ -28,7 +29,8 @@ This creates:
 - `symptom_features.pkl`
 - `symptom_metrics.json`
 
-The trainer also looks for `testing.csv` and prints the test accuracy when it is available.
+The trainer always computes a validation split accuracy from the selected training set.
+If an external test file is available and feature-compatible, it also reports testing accuracy.
 
 ## Run the API
 

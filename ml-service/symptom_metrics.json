@@ -1,7 +1,12 @@
 {
-  "trained_rows": 391,
-  "feature_count": 1326,
-  "target_column": "Prognosis",
+  "training_source": "ml-service\\training_data.csv",
+  "trained_rows": 4920,
+  "feature_count": 133,
+  "target_column": "prognosis",
+  "validation_rows": 984,
+  "validation_accuracy": 1.0,
+  "testing_source": "ml-service\\testing.csv",
   "testing_rows": 414,
-  "testing_accuracy": 0.6159420289855072
+  "testing_feature_coverage": 0.0,
+  "testing_skipped_reason": "Testing dataset is incompatible with the selected training features."
 }
