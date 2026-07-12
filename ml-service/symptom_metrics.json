@@ -1,0 +1,7 @@
+{
+  "trained_rows": 391,
+  "feature_count": 1326,
+  "target_column": "Prognosis",
+  "testing_rows": 414,
+  "testing_accuracy": 0.6159420289855072
+}
