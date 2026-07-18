@@ -319,7 +319,8 @@ class PredictionResponse(BaseModel):
     confidence: float
     matched_symptoms: List[str]
     all_matched_count: int
-    severity_label: str  # Human-readable: "Emergency", "See Doctor Soon", etc.
+    severity_label: str
+    alternatives: List[dict] = Field(default_factory=list)  # Human-readable: "Emergency", "See Doctor Soon", etc.
 
 
 class SymptomsListResponse(BaseModel):
@@ -407,19 +408,54 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     probabilities = model.predict_proba([input_vector])[0]
     confidence = float(np.max(probabilities))
 
+    # Get top 6 predictions with probabilities
+    classes = model.classes_
+    top_indices = np.argsort(probabilities)[::-1][:6]
+    alternatives = []
+    for i in top_indices:
+        prob = float(probabilities[i]) * 100
+        if prob > 1.0:
+            alternatives.append({"disease": str(classes[i]), "score": f"{round(prob, 1)}%"})
+
+    related_symptoms_text = ""
+    if confidence < 50.0:
+        try:
+            import pandas as pd
+            df = pd.read_csv("training_data.csv")
+            if len(matched) > 0:
+                symptom_col = matched[0].replace(" ", "_")
+                if symptom_col in df.columns:
+                    numeric_df = df.select_dtypes(include=['number'])
+                    related = numeric_df[df[symptom_col] == 1].sum().drop(symptom_col, errors='ignore')
+                    top_related = related.nlargest(5).index.tolist()
+                    clean_related = [s.replace("_", " ") for s in top_related if related[s] > 0]
+                    if clean_related:
+                        related_symptoms_text = " Tip: If you also have " + ", ".join(clean_related) + ", please add them for a more accurate prediction."
+        except Exception:
+            pass
+
     # Look up severity mapping
     severity_info = DISEASE_SEVERITY.get(str(predicted_disease), DEFAULT_SEVERITY)
+    
+    if confidence < 50.0:
+        predicted_disease = "Multiple Possibilities"
+        recommendation = "Please provide more specific symptoms to narrow down the exact condition." + related_symptoms_text
+        urgency_level = "doctor_recommended"
+        specialty = "General Practitioner"
+    else:
+        recommendation = severity_info["recommendation"]
 
     return PredictionResponse(
         predicted_disease=str(predicted_disease),
-        should_visit_doctor=severity_info["should_visit_doctor"],
-        urgency_level=severity_info["urgency"],
-        recommendation=severity_info["recommendation"],
-        specialty=severity_info["specialty"],
+        should_visit_doctor=True if confidence < 50.0 else severity_info["should_visit_doctor"],
+        urgency_level=urgency_level if confidence < 50.0 else severity_info["urgency"],
+        recommendation=recommendation,
+        specialty=specialty if confidence < 50.0 else severity_info["specialty"],
         confidence=round(confidence * 100, 1),
         matched_symptoms=matched,
         all_matched_count=len(matched),
         severity_label=SEVERITY_LABELS.get(severity_info["urgency"], "Unknown"),
+        alternatives=alternatives if confidence < 50.0 else []
     )
 
 

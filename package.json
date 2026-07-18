@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "concurrently --names \"API,ML\" --prefix-colors \"cyan,magenta\" \"nodemon src/app.js\" \".venv/Scripts/python.exe ml-service/app.py\"",
+    "dev:api": "nodemon src/app.js",
+    "ml": ".venv/Scripts/python.exe ml-service/app.py"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +23,7 @@
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
+    "concurrently": "^10.0.3",
     "nodemon": "^3.1.4"
   }
 }
