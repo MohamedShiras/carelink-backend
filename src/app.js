@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { sequelize } from './models/index.js';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { sequelize, User } from './models/index.js';
 import authRoutes from './routes/auth.routes.js';
 import triageRoutes from './routes/triage.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
@@ -13,11 +16,35 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable Cross-Origin Resource Sharing
-app.use(cors());
+// Enable Helmet to set security-related HTTP headers
+app.use(helmet());
+
+// Enable Cross-Origin Resource Sharing with credentials support
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true
+}));
+
+// Rate limiting for auth endpoints (brute-force mitigation)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many authentication attempts from this IP, please try again after 15 minutes.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Parse cookie headers
+app.use(cookieParser());
 
 // Parse incoming request JSON bodies
 app.use(express.json());
+
+// Apply rate limiter to auth endpoints
+app.use('/api/auth', authLimiter);
 
 // Base Health Check route
 app.get('/api/health', (req, res) => {
@@ -37,12 +64,36 @@ app.use('/api/admin', adminRoutes);
 // Global Error Handler
 app.use(errorHandler);
 
+// Seed default admin account
+const seedAdmin = async () => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@carelink.com';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'AdminCareLink2026!';
+  
+  try {
+    const adminExists = await User.findOne({ where: { email: adminEmail } });
+    if (!adminExists) {
+      await User.create({
+        name: 'System Admin',
+        email: adminEmail,
+        password: adminPassword,
+        role: 'admin'
+      });
+      console.log(`Default admin user seeded successfully: ${adminEmail}`);
+    }
+  } catch (err) {
+    console.error('Failed to seed default admin user:', err);
+  }
+};
+
 // Database Sync and Server Bootstrap
 const startServer = async () => {
   try {
     // Sync database (creates tables if they don't exist)
     await sequelize.sync({ force: false });
-    console.log('Database synced successfully (SQLite).');
+    console.log('Database synced successfully.');
+
+    // Seed default admin
+    await seedAdmin();
 
     app.listen(PORT, () => {
       console.log(`CareLink backend server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
