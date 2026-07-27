@@ -28,6 +28,10 @@ const Symptom = sequelize.define('Symptom', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  documentUrl: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
   status: {
     type: DataTypes.STRING, // e.g., 'Pending', 'Reviewed'
     defaultValue: 'Pending',
