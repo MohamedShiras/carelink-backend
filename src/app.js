@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.routes.js';
 import triageRoutes from './routes/triage.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import patientRoutes from './routes/patient.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
 dotenv.config();
@@ -60,6 +61,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/patients', patientRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
@@ -88,8 +90,8 @@ const seedAdmin = async () => {
 // Database Sync and Server Bootstrap
 const startServer = async () => {
   try {
-    // Sync database (creates tables if they don't exist)
-    await sequelize.sync({ force: false });
+    // Sync database (creates or updates tables)
+    await sequelize.sync({ alter: true });
     console.log('Database synced successfully.');
 
     // Seed default admin
