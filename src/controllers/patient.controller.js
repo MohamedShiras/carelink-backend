@@ -1,11 +1,38 @@
-import { Patient, User, CareStep, HealthUpdate, NurseLog, Appointment, Prescription } from '../models/index.js';
+import { Patient, User, Doctor, Nurse, CareStep, HealthUpdate, NurseLog, Appointment, Prescription, Admission } from '../models/index.js';
 
-// Get list of all patients (Doctors and Admins only)
+// Get list of patients (Scoped by doctor appointments if role is doctor)
 export const getPatients = async (req, res, next) => {
   try {
-    const patients = await Patient.findAll({
-      include: [{ model: User, attributes: ['name', 'email'] }]
-    });
+    let patients;
+
+    if (req.user.role === 'doctor') {
+      const doctor = await Doctor.findOne({ where: { userId: req.user.id } });
+      if (!doctor) {
+        return res.json({ success: true, data: [] });
+      }
+
+      // Fetch appointments for this doctor to find associated patients
+      const appointments = await Appointment.findAll({
+        where: { doctorId: doctor.id },
+        attributes: ['patientId']
+      });
+
+      const patientIds = [...new Set(appointments.map(a => a.patientId).filter(Boolean))];
+
+      if (patientIds.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+
+      patients = await Patient.findAll({
+        where: { id: patientIds },
+        include: [{ model: User, attributes: ['name', 'email'] }]
+      });
+    } else {
+      // Admins and Nurses can see all patients
+      patients = await Patient.findAll({
+        include: [{ model: User, attributes: ['name', 'email'] }]
+      });
+    }
 
     res.json({
       success: true,
@@ -16,7 +43,7 @@ export const getPatients = async (req, res, next) => {
   }
 };
 
-// Get profile of logged-in patient (and seed default steps/updates if empty)
+// Get profile of logged-in patient
 export const getPatientProfile = async (req, res, next) => {
   try {
     const patient = await Patient.findOne({
@@ -32,33 +59,16 @@ export const getPatientProfile = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Patient profile not found' });
     }
 
-    // Auto-seed default care steps if empty
-    if (!patient.CareSteps || patient.CareSteps.length === 0) {
-      const defaultSteps = [
-        { patientId: patient.id, text: 'Check blood pressure every morning', done: true },
-        { patientId: patient.id, text: 'Upload symptoms if they change', done: false },
-        { patientId: patient.id, text: 'Complete the follow-up blood test', done: false },
-        { patientId: patient.id, text: 'Review diet notes with the care team', done: false }
-      ];
-      const createdSteps = await CareStep.bulkCreate(defaultSteps);
-      patient.setDataValue('CareSteps', createdSteps);
-    }
-
-    // Auto-seed default health updates if empty
-    if (!patient.HealthUpdates || patient.HealthUpdates.length === 0) {
-      const defaultUpdates = [
-        { patientId: patient.id, title: 'Lab results reviewed', detail: 'Kidney markers remain within the expected recovery range.', time: 'Today, 07:20 AM', dotColor: '#10b981' },
-        { patientId: patient.id, title: 'Nurse check-in completed', detail: 'Blood pressure and symptom notes were logged successfully.', time: 'Yesterday, 06:10 PM', dotColor: '#3b82f6' },
-        { patientId: patient.id, title: 'Medication reminder sent', detail: 'Evening dose reminder scheduled for 8:00 PM.', time: 'Yesterday, 05:15 PM', dotColor: '#8b5cf6' }
-      ];
-      const createdUpdates = await HealthUpdate.bulkCreate(defaultUpdates);
-      patient.setDataValue('HealthUpdates', createdUpdates);
-    }
-
     // Fetch associated appointments
     const appointments = await Appointment.findAll({
       where: { patientId: patient.id },
-      include: [{ model: User, attributes: ['name', 'email'] }]
+      include: [
+        {
+          model: Doctor,
+          include: [{ model: User, attributes: ['name', 'email'] }]
+        }
+      ],
+      order: [['createdAt', 'DESC']]
     });
 
     // Fetch associated prescriptions
@@ -71,6 +81,61 @@ export const getPatientProfile = async (req, res, next) => {
       data: patient,
       appointments,
       prescriptions
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update logged-in patient profile details
+export const updatePatientProfile = async (req, res, next) => {
+  try {
+    const patient = await Patient.findOne({
+      where: { userId: req.user.id }
+    });
+
+    if (!patient) {
+      return res.status(404).json({ success: false, message: 'Patient profile not found' });
+    }
+
+    const {
+      name,
+      age,
+      gender,
+      bloodType,
+      phone,
+      address,
+      medicalHistory
+    } = req.body;
+
+    if (typeof name === 'string' && name.trim()) {
+      await User.update({ name: name.trim() }, { where: { id: req.user.id } });
+    }
+
+    await Patient.update({
+      age: age ?? patient.age,
+      gender: gender ?? patient.gender,
+      bloodType: bloodType ?? patient.bloodType,
+      phone: phone ?? patient.phone,
+      address: address ?? patient.address,
+      medicalHistory: medicalHistory ?? patient.medicalHistory
+    }, {
+      where: { id: patient.id }
+    });
+
+    const refreshedPatient = await Patient.findOne({
+      where: { userId: req.user.id },
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
+        { model: CareStep },
+        { model: HealthUpdate }
+      ]
+    });
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: refreshedPatient
     });
   } catch (error) {
     next(error);
@@ -232,59 +297,33 @@ export const createHealthUpdate = async (req, res, next) => {
 // Get List of All Doctors (accessible by Patients for Care Team / Booking)
 export const getDoctors = async (req, res, next) => {
   try {
-    const doctors = await User.findAll({
-      where: { role: 'doctor' },
-      attributes: ['id', 'name', 'email'],
-      include: [{ model: Patient, required: false }] // In case of doctor relationships
+    const doctors = await Doctor.findAll({
+      include: [{ model: User, attributes: ['name', 'email'] }]
     });
+
+    const formattedDoctors = doctors.map(d => ({
+      id: d.id,
+      userId: d.userId,
+      name: d.User?.name || 'Doctor',
+      specialization: d.specialization || 'General Medicine',
+      availability: d.availability
+    }));
 
     res.json({
       success: true,
-      data: doctors
+      data: formattedDoctors
     });
   } catch (error) {
     next(error);
   }
 };
 
-// Get Nurse Logs (and auto-seed defaults if database table is empty)
+// Get Nurse Logs
 export const getNurseLogs = async (req, res, next) => {
   try {
-    let logs = await NurseLog.findAll({
+    const logs = await NurseLog.findAll({
       order: [['createdAt', 'DESC']]
     });
-
-    // Auto-seed default nurse logs if empty
-    if (logs.length === 0) {
-      // Find a patient in database to link the logs to (if any exists)
-      const testPatient = await Patient.findOne();
-      const patientId = testPatient ? testPatient.id : '00000000-0000-0000-0000-000000000000';
-      const patientName = testPatient ? (await User.findByPk(testPatient.userId))?.name : 'Sarah Jenkins';
-
-      const defaultLogs = [
-        {
-          patientId,
-          patientName: patientName || 'Sarah Jenkins',
-          vitals: 'BP: 158/92, HR: 78 bpm, Temp: 98.4 F, SpO2: 97%',
-          notes: 'Patient complains of mild headache. Input/Output fluid chart is being monitored closely. Low urine output logged.',
-          loggedBy: 'Nurse Jessica Smith',
-          loggedAt: '2026-06-15 11:30',
-          escalated: false,
-          escalationStatus: 'Normal'
-        },
-        {
-          patientId,
-          patientName: patientName || 'David Miller',
-          vitals: 'BP: 102/64, HR: 98 bpm, Temp: 99.1 F, SpO2: 95%',
-          notes: 'Chest tube drainage logged at 40ml. Patient reports chest pain level 6/10; analgesics administered. Alerted doctor due to pain elevation.',
-          loggedBy: 'Nurse Jessica Smith',
-          loggedAt: '2026-06-15 12:15',
-          escalated: true,
-          escalationStatus: 'Critical'
-        }
-      ];
-      logs = await NurseLog.bulkCreate(defaultLogs);
-    }
 
     res.json({
       success: true,
@@ -337,6 +376,92 @@ export const acknowledgeNurseLog = async (req, res, next) => {
       success: true,
       message: 'Escalation alert acknowledged successfully',
       data: log
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getApprovedNurses = async (req, res, next) => {
+  try {
+    const nurses = await Nurse.findAll({
+      where: { status: 'Approved' },
+      include: [{ model: User, attributes: ['name', 'email'] }]
+    });
+
+    const activeAdmissions = await Admission.findAll({
+      where: {
+        status: ['Admission Ordered', 'Admitted']
+      }
+    });
+
+    const nurseCounts = {};
+    activeAdmissions.forEach(adm => {
+      if (adm.assignedNurseId) {
+        nurseCounts[adm.assignedNurseId] = (nurseCounts[adm.assignedNurseId] || 0) + 1;
+      }
+    });
+
+    const availableNurses = nurses
+      .map(n => {
+        const count = nurseCounts[n.id] || 0;
+        return {
+          id: n.id,
+          userId: n.userId,
+          name: n.User?.name || 'Nurse',
+          department: n.department || 'General Ward',
+          phone: n.phone,
+          activePatientsCount: count,
+          capacityLabel: `${n.User?.name || 'Nurse'} (${count}/2 Patients Active - ${n.department})`
+        };
+      })
+      .filter(n => n.activePatientsCount < 2);
+
+    res.json({ success: true, data: availableNurses });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const orderPatientAdmission = async (req, res, next) => {
+  try {
+    const { patientId, patientName, ward, assignedNurseId, assignedNurseName, admissionReason } = req.body;
+
+    if (assignedNurseId) {
+      const activeCount = await Admission.count({
+        where: {
+          assignedNurseId,
+          status: ['Admission Ordered', 'Admitted']
+        }
+      });
+
+      if (activeCount >= 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'The selected nurse has reached maximum capacity (2 active patients). Please choose another nurse.'
+        });
+      }
+    }
+
+    const doctor = await Doctor.findOne({ where: { userId: req.user.id } });
+
+    const newAdmission = await Admission.create({
+      patientId: patientId || null,
+      patientName: patientName || 'Patient',
+      ward: ward || 'Ward 1A',
+      status: 'Admission Ordered',
+      doctorId: doctor?.id || null,
+      doctorName: req.user.name || 'Attending Doctor',
+      assignedNurseId: assignedNurseId || null,
+      assignedNurseName: assignedNurseName || 'Assigned Nurse',
+      admissionReason: admissionReason || 'Doctor Ordered Hospital Admission',
+      admittedAt: new Date()
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Hospital admission order sent to Nurse Console!',
+      data: newAdmission
     });
   } catch (error) {
     next(error);

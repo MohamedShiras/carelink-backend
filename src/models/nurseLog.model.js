@@ -40,6 +40,9 @@ const NurseLog = sequelize.define('NurseLog', {
     type: DataTypes.STRING, // e.g., "Normal", "Critical", "Acknowledged"
     defaultValue: 'Normal',
   },
+}, {
+  tableName: 'nurse_logs',
+  freezeTableName: true,
 });
 
 export default NurseLog;

@@ -30,6 +30,8 @@ const User = sequelize.define('User', {
     defaultValue: 'patient',
   },
 }, {
+  tableName: 'users',
+  freezeTableName: true,
   hooks: {
     beforeCreate: async (user) => {
       if (user.password) {

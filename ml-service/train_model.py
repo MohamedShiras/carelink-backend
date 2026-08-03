@@ -36,6 +36,8 @@ def iter_unique_paths(paths: Iterable[Path]) -> Iterable[Path]:
 def find_dataset(data_dir: Path) -> tuple[pd.DataFrame, str]:
     csv_candidates = iter_unique_paths(
         (
+            ROOT / "data1.csv",
+            data_dir / "data1.csv",
             data_dir / "training_data.csv",
             ROOT / "training_data.csv",
             data_dir / "trainings.csv",

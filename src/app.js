@@ -10,8 +10,10 @@ import triageRoutes from './routes/triage.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import patientRoutes from './routes/patient.routes.js';
+import nurseRoutes from './routes/nurse.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
+// CareLink backend server entry point
 dotenv.config();
 
 const app = express();
@@ -29,13 +31,14 @@ app.use(cors({
 // Rate limiting for auth endpoints (brute-force mitigation)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 100 : 10000,
   message: {
     success: false,
     message: 'Too many authentication attempts from this IP, please try again after 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV !== 'production'
 });
 
 // Parse cookie headers
@@ -62,6 +65,7 @@ app.use('/api/triage', triageRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/patients', patientRoutes);
+app.use('/api/nurse', nurseRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
@@ -70,7 +74,7 @@ app.use(errorHandler);
 const seedAdmin = async () => {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@carelink.com';
   const adminPassword = process.env.ADMIN_PASSWORD || 'AdminCareLink2026!';
-  
+
   try {
     const adminExists = await User.findOne({ where: { email: adminEmail } });
     if (!adminExists) {
@@ -90,9 +94,16 @@ const seedAdmin = async () => {
 // Database Sync and Server Bootstrap
 const startServer = async () => {
   try {
-    // Sync database (creates or updates tables)
-    await sequelize.sync({ alter: true });
-    console.log('Database synced successfully.');
+    const autoSyncEnabled = process.env.DB_AUTO_SYNC === 'true';
+
+    if (autoSyncEnabled) {
+      // Sync database only when explicitly enabled
+      await sequelize.sync({ alter: true });
+      console.log('Database synced successfully.');
+    } else {
+      await sequelize.authenticate();
+      console.log('Database connection verified successfully.');
+    }
 
     // Seed default admin
     await seedAdmin();

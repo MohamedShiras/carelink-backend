@@ -75,6 +75,9 @@ const Patient = sequelize.define('Patient', {
     type: DataTypes.STRING,
     defaultValue: 'Active',
   },
+}, {
+  tableName: 'patients',
+  freezeTableName: true,
 });
 
 export default Patient;

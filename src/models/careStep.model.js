@@ -19,6 +19,9 @@ const CareStep = sequelize.define('CareStep', {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
   },
+}, {
+  tableName: 'care_steps',
+  freezeTableName: true,
 });
 
 export default CareStep;

@@ -2,6 +2,7 @@ import express from 'express';
 import {
   getPatients,
   getPatientProfile,
+  updatePatientProfile,
   getPatientById,
   updatePatient,
   createCareStep,
@@ -9,6 +10,8 @@ import {
   deleteCareStep,
   createHealthUpdate,
   getDoctors,
+  getApprovedNurses,
+  orderPatientAdmission,
   getNurseLogs,
   createNurseLog,
   acknowledgeNurseLog
@@ -19,7 +22,10 @@ const router = express.Router();
 
 router.get('/', protect, authorize('doctor', 'admin'), getPatients);
 router.get('/profile', protect, authorize('patient'), getPatientProfile);
+router.put('/profile', protect, authorize('patient'), updatePatientProfile);
 router.get('/doctors', protect, getDoctors);
+router.get('/nurses', protect, authorize('doctor', 'admin'), getApprovedNurses);
+router.post('/admissions/order', protect, authorize('doctor'), orderPatientAdmission);
 router.get('/nurse-logs', protect, authorize('doctor'), getNurseLogs);
 router.post('/nurse-logs', protect, createNurseLog);
 router.put('/nurse-logs/:logId/acknowledge', protect, authorize('doctor'), acknowledgeNurseLog);
