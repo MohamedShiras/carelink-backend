@@ -5,3 +5,4 @@ symptom_features.pkl
 .env
 .venv/
 venv/
+*.csv

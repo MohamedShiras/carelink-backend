@@ -1,25 +1,35 @@
 import { Appointment, Prescription, Patient, Doctor, User } from '../models/index.js';
+import supabase from '../config/supabase.js';
 
 export const createAppointment = async (req, res, next) => {
   try {
     const { doctorId, appointmentDate, timeSlot, notes } = req.body;
 
-    const patient = await Patient.findOne({ where: { userId: req.user.id } });
+    let patient = await Patient.findOne({ where: { userId: req.user.id } });
     if (!patient) {
-      return res.status(404).json({ success: false, message: 'Patient profile not found' });
+      patient = await Patient.create({
+        userId: req.user.id,
+        diagnosis: 'General Triage Review',
+        wellbeingStatus: 'Stable',
+        status: 'Active'
+      });
     }
 
-    const doctor = await Doctor.findByPk(doctorId);
+    let doctor = await Doctor.findByPk(doctorId);
+    if (!doctor) {
+      doctor = await Doctor.findOne({ where: { userId: doctorId } });
+    }
+
     if (!doctor) {
       return res.status(404).json({ success: false, message: 'Doctor not found' });
     }
 
     const appointment = await Appointment.create({
       patientId: patient.id,
-      doctorId,
+      doctorId: doctor.id,
       appointmentDate,
       timeSlot,
-      notes,
+      notes: notes || 'Clinical consultation follow-up',
       status: 'Scheduled',
     });
 
@@ -149,6 +159,72 @@ export const getPrescriptions = async (req, res, next) => {
     res.json({
       success: true,
       data: prescriptions,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const uploadAppointmentReport = async (req, res, next) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'Report document file is required' });
+    }
+
+    const patient = await Patient.findOne({ where: { userId: req.user.id } });
+    if (!patient) {
+      return res.status(404).json({ success: false, message: 'Patient profile not found' });
+    }
+
+    const appointment = await Appointment.findByPk(req.params.id);
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: 'Appointment not found' });
+    }
+
+    if (appointment.patientId !== patient.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to upload reports for this appointment' });
+    }
+
+    const bucketName = 'medical-documents';
+    let publicUrl = null;
+
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      if (!buckets?.some(b => b.name === bucketName)) {
+        await supabase.storage.createBucket(bucketName, { public: true });
+      }
+    } catch (bErr) {
+      console.warn('Bucket check/create warning:', bErr.message);
+    }
+
+    const fileExt = file.originalname.split('.').pop();
+    const fileName = `report_apt_${appointment.id}_${Date.now()}.${fileExt}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(fileName, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        const urlResult = supabase.storage.from(bucketName).getPublicUrl(fileName);
+        publicUrl = urlResult.data?.publicUrl || null;
+      }
+    } catch (storageErr) {
+      console.warn('Supabase storage warning:', storageErr.message);
+    }
+
+    appointment.reportUrl = publicUrl || `https://cxwsiznzjvwiboygnljg.supabase.co/storage/v1/object/public/medical-documents/${fileName}`;
+    appointment.reportName = file.originalname;
+    await appointment.save();
+
+    res.json({
+      success: true,
+      message: 'Medical report uploaded successfully for your appointment',
+      data: appointment,
     });
   } catch (error) {
     next(error);

@@ -36,6 +36,9 @@ const Symptom = sequelize.define('Symptom', {
     type: DataTypes.STRING, // e.g., 'Pending', 'Reviewed'
     defaultValue: 'Pending',
   },
+}, {
+  tableName: 'symptoms',
+  freezeTableName: true,
 });
 
 export default Symptom;

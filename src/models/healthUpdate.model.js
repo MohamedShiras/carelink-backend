@@ -27,6 +27,9 @@ const HealthUpdate = sequelize.define('HealthUpdate', {
     type: DataTypes.STRING, // e.g., "#10b981", "#3b82f6"
     defaultValue: '#10b981',
   },
+}, {
+  tableName: 'health_updates',
+  freezeTableName: true,
 });
 
 export default HealthUpdate;

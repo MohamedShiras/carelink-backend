@@ -2,12 +2,14 @@ import sequelize from '../config/database.js';
 import User from './user.model.js';
 import Patient from './patient.model.js';
 import Doctor from './doctor.model.js';
+import Nurse from './nurse.model.js';
 import Symptom from './symptom.model.js';
 import Appointment from './appointment.model.js';
 import Prescription from './prescription.model.js';
 import CareStep from './careStep.model.js';
 import HealthUpdate from './healthUpdate.model.js';
 import NurseLog from './nurseLog.model.js';
+import Admission from './admission.model.js';
 
 // User & Patient relationships
 User.hasOne(Patient, { foreignKey: 'userId', onDelete: 'CASCADE' });
@@ -16,6 +18,10 @@ Patient.belongsTo(User, { foreignKey: 'userId' });
 // User & Doctor relationships
 User.hasOne(Doctor, { foreignKey: 'userId', onDelete: 'CASCADE' });
 Doctor.belongsTo(User, { foreignKey: 'userId' });
+
+// User & Nurse relationships
+User.hasOne(Nurse, { foreignKey: 'userId', onDelete: 'CASCADE' });
+Nurse.belongsTo(User, { foreignKey: 'userId' });
 
 // Patient & Symptom relationships
 Patient.hasMany(Symptom, { foreignKey: 'patientId', onDelete: 'CASCADE' });
@@ -53,15 +59,25 @@ HealthUpdate.belongsTo(Patient, { foreignKey: 'patientId' });
 Patient.hasMany(NurseLog, { foreignKey: 'patientId', onDelete: 'CASCADE' });
 NurseLog.belongsTo(Patient, { foreignKey: 'patientId' });
 
+// Patient & Admission relationships
+Patient.hasMany(Admission, { foreignKey: 'patientId', onDelete: 'SET NULL' });
+Admission.belongsTo(Patient, { foreignKey: 'patientId' });
+
+// Nurse & Admission relationships
+Nurse.hasMany(Admission, { foreignKey: 'assignedNurseId', onDelete: 'SET NULL' });
+Admission.belongsTo(Nurse, { foreignKey: 'assignedNurseId' });
+
 export {
   sequelize,
   User,
   Patient,
   Doctor,
+  Nurse,
   Symptom,
   Appointment,
   Prescription,
   CareStep,
   HealthUpdate,
-  NurseLog
+  NurseLog,
+  Admission
 };

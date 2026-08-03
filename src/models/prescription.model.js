@@ -31,6 +31,9 @@ const Prescription = sequelize.define('Prescription', {
     type: DataTypes.STRING, // e.g., 'Issued', 'Dispensed'
     defaultValue: 'Issued',
   },
+}, {
+  tableName: 'prescriptions',
+  freezeTableName: true,
 });
 
 export default Prescription;

@@ -31,6 +31,17 @@ const Appointment = sequelize.define('Appointment', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  reportUrl: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  reportName: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+}, {
+  tableName: 'appointments',
+  freezeTableName: true,
 });
 
 export default Appointment;

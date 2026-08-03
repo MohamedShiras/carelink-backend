@@ -1,11 +1,11 @@
 {
-  "training_source": "ml-service\\training_data.csv",
-  "trained_rows": 4920,
-  "feature_count": 133,
+  "training_source": "C:\\Users\\msi\\Documents\\NIBM Module Materials and Assignments\\HDSE\\Final\\CareLink\\carelink-backend\\ml-service\\data1.csv",
+  "trained_rows": 1000000,
+  "feature_count": 131,
   "target_column": "prognosis",
-  "validation_rows": 984,
-  "validation_accuracy": 1.0,
-  "testing_source": "ml-service\\testing.csv",
+  "validation_rows": 200000,
+  "validation_accuracy": 0.9934,
+  "testing_source": "C:\\Users\\msi\\Documents\\NIBM Module Materials and Assignments\\HDSE\\Final\\CareLink\\carelink-backend\\ml-service\\testing.csv",
   "testing_rows": 414,
   "testing_feature_coverage": 0.0,
   "testing_skipped_reason": "Testing dataset is incompatible with the selected training features."

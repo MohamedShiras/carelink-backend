@@ -1,7 +1,7 @@
 import { DataTypes } from 'sequelize';
 import sequelize from '../config/database.js';
 
-const Doctor = sequelize.define('Doctor', {
+const Nurse = sequelize.define('Nurse', {
   id: {
     type: DataTypes.UUID,
     defaultValue: DataTypes.UUIDV4,
@@ -11,21 +11,17 @@ const Doctor = sequelize.define('Doctor', {
     type: DataTypes.UUID,
     allowNull: false,
   },
-  specialization: {
+  department: {
     type: DataTypes.STRING,
-    allowNull: false,
+    defaultValue: 'General Ward',
   },
   licenseNumber: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: true,
     unique: true,
   },
   phone: {
     type: DataTypes.STRING,
-    allowNull: true,
-  },
-  availability: {
-    type: DataTypes.TEXT, // JSON string or text details of available hours
     allowNull: true,
   },
   status: {
@@ -44,13 +40,17 @@ const Doctor = sequelize.define('Doctor', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  cvDocumentUrl: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
   rejectionReason: {
     type: DataTypes.TEXT,
     allowNull: true,
   },
 }, {
-  tableName: 'doctors',
+  tableName: 'nurses',
   freezeTableName: true,
 });
 
-export default Doctor;
+export default Nurse;

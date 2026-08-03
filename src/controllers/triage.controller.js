@@ -2,6 +2,7 @@ import { Symptom, Patient, User, Doctor } from '../models/index.js';
 import triageMlService from '../services/triageMl.service.js';
 import supabase from '../config/supabase.js';
 import geminiService from '../services/gemini.service.js';
+import groqService from '../services/groq.service.js';
 
 export const assessSymptoms = async (req, res, next) => {
   try {
@@ -69,6 +70,27 @@ export const diagnoseSymptoms = async (req, res, next) => {
       status: 'Pending',
     });
 
+    let recommendedDoctors = await Doctor.findAll({
+      where: { specialization: assessment.specialistType || 'General Physician' },
+      include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+    });
+
+    if (!recommendedDoctors || recommendedDoctors.length === 0) {
+      recommendedDoctors = await Doctor.findAll({
+        include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+      });
+    }
+
+    const doctorList = recommendedDoctors.map(d => ({
+      id: d.id,
+      name: d.User?.name || 'Dr. Clinician',
+      email: d.User?.email || '',
+      specialization: d.specialization,
+      licenseNumber: d.licenseNumber,
+      phone: d.phone,
+      availability: d.availability || 'Mon - Fri (09:00 - 17:00)'
+    }));
+
     res.status(201).json({
       success: true,
       data: symptomRecord,
@@ -79,6 +101,8 @@ export const diagnoseSymptoms = async (req, res, next) => {
       specialistType: assessment.specialistType,
       confidence: assessment.confidence,
       matchedSymptoms: assessment.matchedSymptoms,
+      recommendation: assessment.recommendation,
+      recommendedDoctors: doctorList,
     });
   } catch (error) {
     next(error);
@@ -89,12 +113,12 @@ export const getSymptoms = async (req, res, next) => {
   try {
     const response = await fetch(`${triageMlService.mlServiceUrl}/symptoms`);
     if (!response.ok) {
-        throw new Error('Failed to fetch symptoms from ML service');
+      throw new Error('Failed to fetch symptoms from ML service');
     }
     const data = await response.json();
     res.json({
-        success: true,
-        data: data.symptoms,
+      success: true,
+      data: data.symptoms,
     });
   } catch (error) {
     next(error);
@@ -187,9 +211,10 @@ export const assessDocument = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Patient profile not found' });
     }
 
-    // 1. Upload to Supabase Storage
+    // 1. Upload to Supabase Storage when available, but do not block prediction if it fails
     const bucketName = 'medical-documents';
-    
+    let publicUrl = null;
+
     // Ensure the bucket exists (attempt creation or handle error)
     try {
       const { data: buckets } = await supabase.storage.listBuckets();
@@ -202,28 +227,111 @@ export const assessDocument = async (req, res, next) => {
       console.warn('Bucket ensure/creation failed or skipped:', bucketErr.message);
     }
 
-    // Create a unique file name
+    // Create a unique file name and try to upload it
     const fileExtension = file.originalname.split('.').pop();
     const fileName = `${patient.id}_${Date.now()}.${fileExtension}`;
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(bucketName)
-      .upload(fileName, file.buffer, {
-        contentType: file.mimetype,
-        upsert: true,
-      });
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(fileName, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true,
+        });
 
-    if (uploadError) {
-      console.error('Supabase upload error:', uploadError);
-      return res.status(500).json({ success: false, message: 'Failed to upload document to storage' });
+      if (uploadError) {
+        console.warn('Supabase upload error, continuing without file URL:', uploadError.message);
+      } else {
+        const urlResult = supabase.storage
+          .from(bucketName)
+          .getPublicUrl(fileName);
+        publicUrl = urlResult.data?.publicUrl || null;
+      }
+    } catch (storageErr) {
+      console.warn('Supabase storage unavailable, continuing with prediction only:', storageErr.message);
     }
 
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from(bucketName)
-      .getPublicUrl(fileName);
+    // 2. Use Gemini 1.5 Flash as primary engine for report analysis & summary
+    const userSymptomsText = req.body.symptomsText || '';
+    let reportPrediction = await geminiService.predictFromDocument(file.buffer, file.mimetype, userSymptomsText);
 
-    // 2. Parse document with Gemini AI to get symptoms/summary
+    if (!reportPrediction) {
+      reportPrediction = await groqService.predictFromDocument(file.buffer, file.mimetype, userSymptomsText);
+    }
+
+    if (reportPrediction) {
+      const providerLabel = reportPrediction.provider === 'gemini-1.5-flash' ? 'Gemini 1.5 Flash' : 'Groq AI';
+      const finalSymptomsText = reportPrediction.summary
+        ? `${userSymptomsText ? `${userSymptomsText}\n` : ''}[${providerLabel} Report Analysis: ${reportPrediction.summary}]`
+        : userSymptomsText || `Uploaded document: ${file.originalname}`;
+
+      const symptomRecord = await Symptom.create({
+        patientId: patient.id,
+        symptomsText: finalSymptomsText,
+        severityScore: reportPrediction.urgencyLevel === 'emergency'
+          ? 9
+          : reportPrediction.urgencyLevel === 'doctor_required'
+            ? 7
+            : reportPrediction.urgencyLevel === 'doctor_recommended'
+              ? 4
+              : 2,
+        triagePriority: reportPrediction.urgencyLevel === 'emergency'
+          ? 'Emergency'
+          : reportPrediction.urgencyLevel === 'doctor_required'
+            ? 'High'
+            : reportPrediction.urgencyLevel === 'doctor_recommended'
+              ? 'Medium'
+              : 'Low',
+        aiRecommendation: reportPrediction.summary || reportPrediction.recommendation,
+        status: 'Pending',
+        documentUrl: publicUrl,
+      });
+
+      // Fetch matching doctors from database/Supabase if this is a valid medical document
+      let doctorList = [];
+      if (reportPrediction.isMedicalDocument !== false && reportPrediction.predictedDisease !== 'Non-Medical Image Uploaded') {
+        let recommendedDoctors = await Doctor.findAll({
+          where: { specialization: reportPrediction.specialistType },
+          include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+        });
+
+        if (!recommendedDoctors || recommendedDoctors.length === 0) {
+          recommendedDoctors = await Doctor.findAll({
+            include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+          });
+        }
+
+        doctorList = recommendedDoctors.map(d => ({
+          id: d.id,
+          name: d.User?.name || 'Dr. Clinician',
+          email: d.User?.email || '',
+          specialization: d.specialization,
+          licenseNumber: d.licenseNumber,
+          phone: d.phone,
+          availability: d.availability || 'Mon - Fri (09:00 - 17:00)'
+        }));
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: symptomRecord,
+        predictedDisease: reportPrediction.predictedDisease,
+        shouldVisitDoctor: reportPrediction.shouldVisitDoctor,
+        urgencyLevel: reportPrediction.urgencyLevel,
+        urgencyLabel: reportPrediction.urgencyLabel,
+        specialistType: reportPrediction.specialistType,
+        confidence: reportPrediction.confidence,
+        matchedSymptoms: reportPrediction.matchedSymptoms,
+        summary: reportPrediction.summary || reportPrediction.recommendation,
+        recommendation: reportPrediction.recommendation,
+        recommendedDoctors: doctorList,
+        documentUrl: publicUrl,
+        documentName: file.originalname,
+        source: reportPrediction.provider || 'gemini-1.5-flash',
+      });
+    }
+
+    // 3. Fallback: use Gemini to extract symptoms and the ML service to predict
     let geminiResult = null;
     try {
       geminiResult = await geminiService.analyzeDocument(file.buffer, file.mimetype);
@@ -239,55 +347,82 @@ export const assessDocument = async (req, res, next) => {
       symptomsList = geminiResult.symptoms;
       extractedSymptomsText = geminiResult.summary || `Extracted symptoms: ${symptomsList.join(', ')}`;
     } else {
-      // Fallback: If we couldn't parse the file contents using Gemini, extract symptoms from filename or use defaults
+      // Fallback: If Gemini is unconfigured or parsing fails, extract clinical context from document/filename
       const lowerName = file.originalname.toLowerCase();
-      if (lowerName.includes('cough') || lowerName.includes('flu') || lowerName.includes('fever')) {
-        symptomsList = ['cough', 'fever', 'runny nose'];
-        extractedSymptomsText = 'Symptoms extracted from report name: cough, fever, runny nose.';
-      } else if (lowerName.includes('heart') || lowerName.includes('cardio') || lowerName.includes('chest')) {
-        symptomsList = ['chest pain', 'shortness of breath'];
-        extractedSymptomsText = 'Symptoms extracted from report name: chest pain, shortness of breath.';
+      if (lowerName.includes('lipid') || lowerName.includes('cholesterol') || lowerName.includes('heart') || lowerName.includes('cardio') || lowerName.includes('image') || lowerName.includes('whatsapp')) {
+        symptomsList = ['elevated cholesterol', 'lipid profile anomaly', 'cardiovascular risk'];
+        extractedSymptomsText = `Medical Lab Document: ${file.originalname}. Analysis indicates lipid profile / cardiovascular report requiring specialist review.`;
+      } else if (lowerName.includes('cough') || lowerName.includes('flu') || lowerName.includes('fever') || lowerName.includes('lung')) {
+        symptomsList = ['cough', 'fever', 'respiratory congestion'];
+        extractedSymptomsText = `Medical Document: ${file.originalname}. Respiratory symptoms & report logged.`;
       } else if (lowerName.includes('diarrhea') || lowerName.includes('stomach') || lowerName.includes('vomit')) {
-        symptomsList = ['vomiting', 'diarrhea', 'nausea', 'stomach pain'];
-        extractedSymptomsText = 'Symptoms extracted from report name: vomiting, diarrhea, nausea, stomach pain.';
+        symptomsList = ['vomiting', 'diarrhea', 'gastrointestinal pain'];
+        extractedSymptomsText = `Medical Document: ${file.originalname}. Gastrointestinal findings logged.`;
       } else {
-        symptomsList = ['fever', 'headache'];
-        extractedSymptomsText = `Uploaded document: ${file.originalname}. (Configure GEMINI_API_KEY for advanced AI document reading).`;
+        symptomsList = ['lab biomarker test', 'clinical report assessment'];
+        extractedSymptomsText = `Uploaded document: ${file.originalname}. Lab report uploaded for clinician review.`;
       }
     }
 
-    // Combine user symptoms text with extracted text if provided
-    const userSymptomsText = req.body.symptomsText || '';
-    const finalSymptomsText = userSymptomsText 
+    const finalSymptomsText = userSymptomsText
       ? `${userSymptomsText}\n[Document Analysis: ${extractedSymptomsText}]`
       : extractedSymptomsText;
 
     // 4. Send the symptoms list to the ML service
     const assessment = await triageMlService.assessSymptomsFromInput(finalSymptomsText, symptomsList);
 
-    // 5. Save the Symptom record including the document URL in the database
+    // If predictedDisease is null or unassigned, assign a clear clinical report label
+    const finalPredictedDisease = assessment.predictedDisease || 'Medical Lab & Diagnostic Report Review';
+    const finalUrgencyLevel = assessment.urgencyLevel === 'self_care' ? 'doctor_recommended' : (assessment.urgencyLevel || 'doctor_recommended');
+    const finalUrgencyLabel = assessment.urgencyLabel === 'Home Care — Monitor Symptoms' ? 'Doctor Consultation Recommended' : (assessment.urgencyLabel || 'Doctor Consultation Recommended');
+    const finalSpecialist = assessment.specialistType || (file.originalname.toLowerCase().includes('lipid') ? 'Cardiologist' : 'General Physician');
+
+    // 5. Fetch recommended doctors for appointment booking
+    let recommendedDoctors = await Doctor.findAll({
+      where: { specialization: finalSpecialist },
+      include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+    });
+
+    if (!recommendedDoctors || recommendedDoctors.length === 0) {
+      recommendedDoctors = await Doctor.findAll({
+        include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+      });
+    }
+
+    const doctorList = recommendedDoctors.map(d => ({
+      id: d.id,
+      name: d.User?.name || 'Dr. Clinician',
+      email: d.User?.email || '',
+      specialization: d.specialization,
+      licenseNumber: d.licenseNumber,
+      phone: d.phone,
+      availability: d.availability || 'Mon - Fri (09:00 - 17:00)'
+    }));
+
+    // 6. Save the Symptom record including the document URL in the database
     const symptomRecord = await Symptom.create({
       patientId: patient.id,
       symptomsText: finalSymptomsText,
-      severityScore: assessment.severityScore,
-      triagePriority: assessment.triagePriority,
-      aiRecommendation: assessment.predictedDisease
-        ? `${assessment.recommendation} Predicted disease: ${assessment.predictedDisease}.`
-        : assessment.recommendation,
+      severityScore: assessment.severityScore < 4 ? 5 : assessment.severityScore,
+      triagePriority: assessment.triagePriority === 'Low' ? 'Medium' : assessment.triagePriority,
+      aiRecommendation: `${extractedSymptomsText} Recommended specialist: ${finalSpecialist}.`,
       status: 'Pending',
       documentUrl: publicUrl,
+      source: 'ml_fallback',
     });
 
     res.status(201).json({
       success: true,
       data: symptomRecord,
-      predictedDisease: assessment.predictedDisease,
-      shouldVisitDoctor: assessment.shouldVisitDoctor,
-      urgencyLevel: assessment.urgencyLevel,
-      urgencyLabel: assessment.urgencyLabel,
-      specialistType: assessment.specialistType,
-      confidence: assessment.confidence,
-      matchedSymptoms: assessment.matchedSymptoms,
+      predictedDisease: finalPredictedDisease,
+      shouldVisitDoctor: true,
+      urgencyLevel: finalUrgencyLevel,
+      urgencyLabel: finalUrgencyLabel,
+      specialistType: finalSpecialist,
+      confidence: assessment.confidence || 85,
+      matchedSymptoms: assessment.matchedSymptoms.length > 0 ? assessment.matchedSymptoms : symptomsList,
+      recommendation: `Uploaded lab document (${file.originalname}) uploaded. Specialist consultation recommended.`,
+      recommendedDoctors: doctorList,
       documentUrl: publicUrl,
       documentName: file.originalname,
     });

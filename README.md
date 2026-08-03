@@ -20,9 +20,23 @@ Designed modularly with Sequelize ORM and configured out-of-the-box with SQLite,
    A local `.env` file has been pre-configured. To customize settings, review `.env`:
    - `PORT`: Server port (default `5000`)
    - `JWT_SECRET`: Key for token generation
-   - `DB_STORAGE`: File path for the SQLite database
+   - `SUPABASE_DB_URL` or `DATABASE_URL`: Supabase PostgreSQL connection string for live database mode
+   - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`: Supabase auth client settings
+   - `GEMINI_API_KEY`: Enables Gemini-powered report prediction
+   - `DB_STORAGE`: File path for the SQLite database, used only when no live database URL is configured
+   - `DB_AUTO_SYNC`: Set to `true` only when you intentionally want Sequelize to alter the schema
 
-3. **Start the Development Server:**
+3. **Run the Supabase schema:**
+   - Open `supabase/schema.sql` in the Supabase SQL editor.
+   - Run the script to create the backend tables.
+
+4. **Enable live database mode:**
+   - Replace the placeholder password in `SUPABASE_DB_URL` or set `DATABASE_URL` to the exact Supabase Postgres connection string.
+   - Set `SUPABASE_SERVICE_ROLE_KEY` to the project service-role key so Supabase Auth admin calls can create users.
+   - Set `GEMINI_API_KEY` to enable Gemini-backed report predictions.
+   - Restart the backend so it reconnects using Postgres instead of SQLite.
+
+5. **Start the Development Server:**
    ```bash
    npm run dev
    ```
